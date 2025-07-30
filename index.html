@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Automatic Job Scheduler</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .job-card {
+            transition: all 0.3s ease-in-out;
+        }
+        .job-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+        .processing-indicator {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Automatic Job Scheduler</h1>
+            <p class="text-md text-gray-600 mt-2">Demonstrating dynamic job prioritization using Smith's Rule (Cost / Processing Time)</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            <!-- Column 1: Add New Job -->
+            <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-md border border-gray-200">
+                <h2 class="text-xl font-semibold mb-4 border-b pb-2">Add New Job</h2>
+                <form id="add-job-form" class="space-y-4">
+                    <div>
+                        <label for="processingTime" class="block text-sm font-medium text-gray-700">Processing Time (ms)</label>
+                        <input type="number" id="processingTime" value="3000" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+                    </div>
+                    <div>
+                        <label for="deadline" class="block text-sm font-medium text-gray-700">Deadline (seconds from now)</label>
+                        <input type="number" id="deadline" value="30" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+                    </div>
+                    <div>
+                        <label for="priority" class="block text-sm font-medium text-gray-700">Priority (1-5)</label>
+                        <input type="range" id="priority" min="1" max="5" value="3" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-start">
+                            <div class="flex items-center h-5">
+                                <input id="userEngaged" type="checkbox" class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded">
+                            </div>
+                            <div class="ml-3 text-sm">
+                                <label for="userEngaged" class="font-medium text-gray-700">User Engaged?</label>
+                            </div>
+                        </div>
+                        <div class="flex items-start">
+                            <div class="flex items-center h-5">
+                                <input id="isBlocking" type="checkbox" class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded">
+                            </div>
+                            <div class="ml-3 text-sm">
+                                <label for="isBlocking" class="font-medium text-gray-700">Is Blocking?</label>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="submit" class="w-full bg-indigo-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition">
+                        Add Job to Queue
+                    </button>
+                </form>
+            </div>
+
+            <!-- Column 2: Job Queue -->
+            <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-md border border-gray-200">
+                <div class="flex justify-between items-center mb-4 border-b pb-2">
+                    <h2 class="text-xl font-semibold">Job Queue (<span id="job-count">0</span>)</h2>
+                    <span class="text-sm font-medium text-gray-500">Processing is Automatic</span>
+                </div>
+                <div id="job-queue-list" class="space-y-3 h-96 overflow-y-auto pr-2">
+                    <!-- Job cards will be injected here -->
+                    <p id="empty-queue-msg" class="text-center text-gray-500 pt-16">The job queue is empty. Add a job to get started.</p>
+                </div>
+            </div>
+
+        </div>
+        
+        <!-- Section 3: Processing and Completed -->
+        <div class="mt-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div class="bg-white p-6 rounded-xl shadow-md border border-gray-200">
+                 <h2 class="text-xl font-semibold mb-4 border-b pb-2">Currently Processing</h2>
+                 <div id="processing-job" class="text-center text-gray-500 pt-8">No job is currently processing.</div>
+            </div>
+            <div class="bg-white p-6 rounded-xl shadow-md border border-gray-200">
+                 <h2 class="text-xl font-semibold mb-4 border-b pb-2">Completed Jobs</h2>
+                 <div id="completed-jobs-list" class="space-y-2 h-48 overflow-y-auto pr-2">
+                    <p id="no-completed-msg" class="text-center text-gray-500 pt-8">No jobs have been completed yet.</p>
+                 </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- JavaScript implementation of the Java Job Scheduler ---
+
+        // Global counter for submission order
+        let jobSubmissionCounter = 0;
+
+        // Represents a single job, similar to the Java Job class.
+        class Job {
+            constructor(processingTime, deadlineSeconds, priority, userEngaged, isBlocking) {
+                this.id = 'job_' + Math.random().toString(36).substr(2, 9);
+                this.submissionOrder = ++jobSubmissionCounter;
+                this.processingTime = processingTime;
+                this.submissionTime = new Date();
+                this.deadline = new Date(this.submissionTime.getTime() + deadlineSeconds * 1000);
+                this.priority = priority;
+                this.userEngaged = userEngaged;
+                this.isBlocking = isBlocking;
+                this.cost = 0; // Will be calculated dynamically
+            }
+        }
+
+        // Calculates the dynamic cost ('c') of a job waiting in the queue.
+        const CostCalculator = {
+            AGE_WEIGHT: 0.1,
+            DEADLINE_WEIGHT: 0.4,
+            PRIORITY_WEIGHT: 0.2,
+            ENGAGEMENT_WEIGHT: 0.2,
+            BLOCKING_WEIGHT: 0.1,
+
+            calculateCost(job) {
+                const now = new Date();
+                const ageInMillis = now.getTime() - job.submissionTime.getTime();
+                const ageFactor = ageInMillis / 1000.0;
+
+                const millisToDeadline = job.deadline.getTime() - now.getTime();
+                let deadlineFactor = (millisToDeadline <= 0) ? 1000 : 1000.0 / millisToDeadline;
+
+                const priorityFactor = job.priority;
+                const engagementFactor = job.userEngaged ? 10.0 : 1.0;
+                const blockingFactor = job.isBlocking ? 5.0 : 1.0;
+
+                const totalCost = (ageFactor * this.AGE_WEIGHT) +
+                                  (deadlineFactor * this.DEADLINE_WEIGHT) +
+                                  (priorityFactor * this.PRIORITY_WEIGHT) +
+                                  (engagementFactor * this.ENGAGEMENT_WEIGHT) +
+                                  (blockingFactor * this.BLOCKING_WEIGHT);
+                
+                job.cost = totalCost;
+                return totalCost;
+            }
+        };
+
+        // Manages the job queue.
+        class JobScheduler {
+            constructor() {
+                this.jobQueue = [];
+            }
+
+            addJob(job) {
+                this.jobQueue.push(job);
+            }
+
+            getNextJob() {
+                if (this.jobQueue.length === 0) return null;
+                this.refreshQueueOrder();
+                return this.jobQueue.shift();
+            }
+
+            hasJobs() {
+                return this.jobQueue.length > 0;
+            }
+
+            refreshQueueOrder() {
+                 if (this.jobQueue.length === 0) return;
+                 this.jobQueue.forEach(job => CostCalculator.calculateCost(job));
+                 this.jobQueue.sort((a, b) => {
+                    const ratioA = a.cost / a.processingTime;
+                    const ratioB = b.cost / b.processingTime;
+                    return ratioB - ratioA;
+                });
+            }
+        }
+
+        // --- UI Logic ---
+        document.addEventListener('DOMContentLoaded', () => {
+            const scheduler = new JobScheduler();
+            const form = document.getElementById('add-job-form');
+            const queueList = document.getElementById('job-queue-list');
+            const jobCountEl = document.getElementById('job-count');
+            const processingJobEl = document.getElementById('processing-job');
+            const completedListEl = document.getElementById('completed-jobs-list');
+            const emptyQueueMsg = document.getElementById('empty-queue-msg');
+            const noCompletedMsg = document.getElementById('no-completed-msg');
+            
+            let isProcessing = false;
+
+            // Function to render the entire job queue
+            function renderQueue() {
+                queueList.innerHTML = ''; 
+                
+                if (!scheduler.hasJobs() && !isProcessing) {
+                    emptyQueueMsg.style.display = 'block';
+                } else {
+                     emptyQueueMsg.style.display = 'none';
+                }
+                
+                scheduler.jobQueue.forEach(job => {
+                    const ratio = (job.cost / job.processingTime).toFixed(4);
+                    const ageInSeconds = (new Date().getTime() - job.submissionTime.getTime()) / 1000;
+                    
+                    let bgColorClass = 'bg-green-100 border-green-200';
+                    if (ageInSeconds > 15) {
+                        bgColorClass = 'bg-red-100 border-red-200';
+                    } else if (ageInSeconds > 5) {
+                        bgColorClass = 'bg-yellow-100 border-yellow-200';
+                    }
+
+                    const card = document.createElement('div');
+                    card.className = `job-card p-4 rounded-lg border shadow-sm ${bgColorClass}`;
+                    card.innerHTML = `
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="font-bold text-indigo-700">ID: ${job.id} (#${job.submissionOrder})</p>
+                                <p class="text-sm text-gray-600">Proc. Time: ${job.processingTime}ms | Priority: ${job.priority}</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="font-semibold text-lg text-green-700">${ratio}</p>
+                                <p class="text-xs text-gray-500">Cost/Time Ratio</p>
+                            </div>
+                        </div>
+                        <div class="mt-2 text-xs text-gray-500">
+                            <span>Cost: ${job.cost.toFixed(2)}</span> | 
+                            <span>Deadline: ${job.deadline.toLocaleTimeString()}</span> |
+                            <span>Engaged: ${job.userEngaged ? 'Yes' : 'No'}</span> |
+                            <span>Blocking: ${job.isBlocking ? 'Yes' : 'No'}</span>
+                        </div>
+                    `;
+                    queueList.appendChild(card);
+                });
+
+                jobCountEl.textContent = scheduler.jobQueue.length;
+            }
+
+            // Handle form submission to add a new job
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const processingTime = parseInt(document.getElementById('processingTime').value, 10);
+                const deadline = parseInt(document.getElementById('deadline').value, 10);
+                const priority = parseInt(document.getElementById('priority').value, 10);
+                const userEngaged = document.getElementById('userEngaged').checked;
+                const isBlocking = document.getElementById('isBlocking').checked;
+
+                const newJob = new Job(processingTime, deadline, priority, userEngaged, isBlocking);
+                scheduler.addJob(newJob);
+                scheduler.refreshQueueOrder();
+                renderQueue();
+            });
+
+            // --- Automatic Processing Logic ---
+            function processNextJob() {
+                if (isProcessing || !scheduler.hasJobs()) {
+                    return;
+                }
+
+                const jobToProcess = scheduler.getNextJob();
+                if (jobToProcess) {
+                    isProcessing = true;
+                    
+                    // Display a "preparing" message for 10 seconds before starting the actual work
+                    processingJobEl.innerHTML = `
+                        <div class="bg-yellow-100 p-4 rounded-lg border border-yellow-200 shadow-sm">
+                            <p class="font-bold text-yellow-800">Preparing to process...</p>
+                            <p class="text-sm text-gray-600">Starting job ${jobToProcess.id} (#${jobToProcess.submissionOrder}) in 10s.</p>
+                        </div>
+                    `;
+                    renderQueue(); // Update queue to show the job has been removed
+
+                    // 10-second delay before the actual processing simulation begins
+                    setTimeout(() => {
+                        // Now, start the actual processing simulation
+                        processingJobEl.innerHTML = `
+                            <div class="bg-blue-100 p-4 rounded-lg border border-blue-200 shadow-sm processing-indicator">
+                                <p class="font-bold text-blue-800">ID: ${jobToProcess.id} (#${jobToProcess.submissionOrder})</p>
+                                <p class="text-sm text-gray-600">Simulating work for ${jobToProcess.processingTime}ms...</p>
+                            </div>
+                        `;
+
+                        // Simulate the job's own processing time
+                        setTimeout(() => {
+                            isProcessing = false;
+                            
+                            if (noCompletedMsg) noCompletedMsg.style.display = 'none';
+                            const completedEl = document.createElement('div');
+                            completedEl.className = 'bg-gray-100 p-2 rounded-md text-sm text-gray-700';
+                            completedEl.textContent = `✓ Completed: ${jobToProcess.id} (#${jobToProcess.submissionOrder})`;
+                            completedListEl.prepend(completedEl);
+
+                            processingJobEl.innerHTML = '<div class="text-center text-gray-500 pt-8">No job is currently processing.</div>';
+                            
+                            scheduler.refreshQueueOrder();
+                            renderQueue();
+                        }, jobToProcess.processingTime);
+
+                    }, 10000); // 10-second (10000ms) delay
+                }
+            }
+            
+            // Main loop: Refreshes queue for dynamic costs and triggers processing
+            function mainLoop() {
+                if (!isProcessing) {
+                    scheduler.refreshQueueOrder();
+                }
+                renderQueue();
+                processNextJob();
+            }
+            
+            setInterval(mainLoop, 1000); // Check every second
+
+            // Initial render
+            renderQueue();
+        });
+    </script>
+</body>
+</html>
